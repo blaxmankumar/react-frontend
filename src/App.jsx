@@ -22,7 +22,7 @@ function App() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await fetch('/api/health');
+        const res = await fetch('http://localhost:5000/health');
         if (res.ok) {
            setBackendConnected(true);
            fetchLeaderboard();
@@ -40,7 +40,7 @@ function App() {
 
   const fetchLeaderboard = async () => {
     try {
-       const res = await fetch('/api/scores');
+       const res = await fetch('http://localhost:5000/score');
        if (res.ok) {
          setLeaderboard(await res.json());
        }
@@ -71,7 +71,7 @@ function App() {
 
   const submitScore = async (finalScore) => {
     try {
-      await fetch('/api/scores', {
+      await fetch('http://localhost:5000/score', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: playerName, score: finalScore })
