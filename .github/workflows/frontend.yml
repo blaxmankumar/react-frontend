@@ -1,73 +1,74 @@
 name: Backend DevSecOps Pipeline
 
 on:
-push:
-branches:
-- main
+  push:
+    branches:
+      - main
 
 env:
-AWS_REGION: us-east-1
-ECR_REPOSITORY: express-backend
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: express-backend
 
 jobs:
-build-scan-push:
-runs-on: ubuntu-latest
+  build-scan-push:
+    runs-on: ubuntu-latest
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-  - name: Setup Node
-    uses: actions/setup-node@v4
-    with:
-      node-version: 20
+      - name: Install Dependencies
+        run: npm ci
 
-  - name: Install Dependencies
-    run: npm ci
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-  - name: SonarQube Scan
-    uses: SonarSource/sonarqube-scan-action@v6
-    env:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      - name: Snyk Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
 
-  - name: Snyk Scan
-    uses: snyk/actions/node@master
-    env:
-      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-    with:
-      args: --severity-threshold=high
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-  - name: Configure AWS
-    uses: aws-actions/configure-aws-credentials@v4
-    with:
-      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      aws-region: ${{ env.AWS_REGION }}
+      - name: Login ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-  - name: Login ECR
-    id: login-ecr
-    uses: aws-actions/amazon-ecr-login@v2
+      - name: Build Image
+        run: |
+          docker build -t $ECR_REPOSITORY:latest .
 
-  - name: Build Image
-    run: |
-      docker build -t $ECR_REPOSITORY:latest .
+      - name: Trivy Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_REPOSITORY }}:latest
+          format: table
+          exit-code: 0
 
-  - name: Trivy Scan
-    uses: aquasecurity/trivy-action@master
-    with:
-      image-ref: ${{ env.ECR_REPOSITORY }}:latest
-      format: table
-      exit-code: 0
+      - name: Tag Image
+        run: |
+          docker tag $ECR_REPOSITORY:latest \
+          ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest
 
-  - name: Tag Image
-    run: |
-      docker tag $ECR_REPOSITORY:latest \
-      ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest
+      - name: Push Image
+        run: |
+          docker push \
+          ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest
 
-  - name: Push Image
-    run: |
-      docker push \
-      ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest
-
+      - name: Success
+        run: echo "Backend image pushed successfully"
