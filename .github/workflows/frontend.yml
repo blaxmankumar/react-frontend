@@ -1,88 +1,44 @@
-name: Frontend DevSecOps Pipeline
+name: Deploy to Kind Cluster
 
 on:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: read
-
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: react-frontend
+push:
+branches:
+- main
 
 jobs:
-  build-scan-push:
-    runs-on: ubuntu-latest
+deploy:
+runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+```
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
 
-      - name: Setup NodeJS
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+  - name: Copy manifests
+    uses: appleboy/scp-action@v0.1.7
+    with:
+      host: ${{ secrets.SERVER_IP }}
+      username: ubuntu
+      key: ${{ secrets.SSH_PRIVATE_KEY }}
+      source: "."
+      target: "/home/ubuntu/k8s-manifests"
 
-      - name: Install Dependencies
-        run: npm install
+  - name: Deploy
+    uses: appleboy/ssh-action@v1.0.3
+    with:
+      host: ${{ secrets.SERVER_IP }}
+      username: ubuntu
+      key: ${{ secrets.SSH_PRIVATE_KEY }}
+      script: |
+        export KUBECONFIG=/home/ubuntu/.kube/config
 
-      - name: Build Application
-        run: npm run build
+        kubectl apply -f /home/ubuntu/k8s-manifests/backend/
+        kubectl apply -f /home/ubuntu/k8s-manifests/frontend/
+        kubectl apply -f /home/ubuntu/k8s-manifests/ingress/
 
-      - name: Verify Application
-        run: |
-          node --version
-          npm --version
+        kubectl rollout restart deployment/backend
+        kubectl rollout restart deployment/frontend
 
-  
-
-      # Snyk Scan
-      - name: Snyk Scan
-        uses: snyk/actions/node@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          args: --severity-threshold=high
-
-      # Configure AWS Credentials
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      # Login to ECR
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      # Build Docker Image
-      - name: Build Docker Image
-        run: |
-          docker build -t $ECR_REPOSITORY:${{ github.sha }} .
-
-      # Trivy Scan
-      - name: Trivy Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-          format: table
-          exit-code: 0
-
-      # Tag Image
-      - name: Tag Docker Image
-        run: |
-          docker tag $ECR_REPOSITORY:${{ github.sha }} \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}
-
-      # Push Image
-      - name: Push Image to ECR
-        run: |
-          docker push \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}
-
-      - name: Pipeline Success
-        run: echo "Frontend image pushed successfully to ECR"
+        kubectl rollout status deployment/backend --timeout=300s
+        kubectl rollout status deployment/frontend --timeout=300s
+```
